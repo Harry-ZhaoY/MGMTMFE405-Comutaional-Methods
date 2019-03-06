@@ -1,0 +1,261 @@
+---
+title: "MGMTMFE 405 - Project 5"
+author: "Yanxiang Zhao"
+date: "February 22, 2019"
+output: pdf_document
+---
+## Functions
+### Question 1 Functions
+```{R}
+##### QUESTION 1 #####
+# function to simulate stock paths
+sPaths <- function(s0, r, sigma, t, nSim, n){
+  dt <- t/n
+  sim <- list()
+  for (i in 1:(nSim/2)){
+    dw <- sqrt(dt)*rnorm(n)
+    s_sim1 <- rep(s0,n)
+    s_sim2 <- rep(s0,n)
+    for (s in 2:n){
+      # create anthithetic paths
+      s_sim1[s] <- s_sim1[s-1]*(1 + r*dt + sigma*dw[s])
+      s_sim2[s] <- s_sim2[s-1]*(1 + r*dt - sigma*dw[s])
+    }
+    sim_i <- list(s_sim1, s_sim2)
+    sim <- append(sim, sim_i)
+  }
+  out <- matrix(unlist(sim), nSim, n, byrow = T)
+  return(out)  
+}
+# least squared Monte Carlo simulation
+lsmc <- function(paths, strike, r, t, nSim, n, func, k){
+  dt <- t/n
+  # calculate exercise value at each time
+  ev <- ifelse(strike-paths>0, strike-paths,0)
+  # construct index
+  ind <- cbind(diag(0, nSim, n-1), ifelse(ev[,n]>0, 1,0))
+  # for loop through time
+  for (i in 1:(n-2)){
+    # define x
+    x <- paths[,(n-i)]
+    # define discount factors
+    dsc <- exp(-r*dt*matrix(rep(1:i,each = nSim), nSim, i))
+    # define y
+    y <- apply(matrix(ind[,(n-i+1):n]*ev[,(n-i+1):n]*dsc,
+                      nSim, i),1,sum)
+    # define basis functions
+    if (func == "Laguerre"){
+      L <- function(x, k){
+        out <- switch(k,
+                      exp(-x/2),
+                      exp(-x/2)*(1-x),
+                      exp(-x/2)*(1-2*x+x^2/2),
+                      exp(-x/2)*(1-3*x+(3*x^2)/2-x^3/6))
+        return(out)
+      }
+    } 
+    else if (func == "Hermite"){
+      L <- function(x, k){
+        out <- switch(k,
+                      x^0,
+                      2*x,
+                      4*x^2-2,
+                      8*x^3-12*x)
+        return(out)
+      }
+    } 
+    else if (func == "Monomials"){
+      L <- function(x, k){
+        return(x^(k-1))
+      }
+    } 
+    else {
+      stop("Incorrect function type!")
+    }
+    # Find matrix A and vector b
+    A <- diag(0, k, k)
+    b <- vector()
+    for (p in 1:k){
+      for (q in 1:k){
+        A[p,q] <- sum(L(x,p)*L(x,q))
+      }
+      b[p] <- sum(y*L(x,p))
+    }
+    # find a_i coefficients, using cholesky roots to inverse matrix
+    a <- chol2inv(chol(A))%*%b
+
+    # find expected continuation values
+    est <- vector()
+    for (p in 1:k){
+      est <- cbind(est, L(x,p))
+    }
+    expCv <- est%*%a
+
+    # rewirte index
+    ind[,(n-i)] <- ifelse(ev[,(n-i)]>expCv, 1, 0)
+    # write off 1s in previous
+    ind <- t(apply(ind, 1, function(x) {
+      if (sum(x)>1){
+        replace(x, (which(x>0)[1]+1):n, 0)
+      } 
+      else {x}
+    }))
+  } 
+  # create discount matrix
+  dsct <- exp(-r*dt*matrix(rep(0:(n-1),each = nSim), nSim, n))
+  
+  # compute option value at time 0
+  v0 <- mean(apply(ind*dsct*ev, 1, sum))
+  return(v0)
+}
+```
+## Question 2 Functions
+```{R, eval = FALSE}
+##### QUESTION 2 #####
+# function to price a forward-start European put option
+fwdPutEu <- function(s0, r, sigma, t_x, t_n, nSim, n){
+  dt <- t_n/n
+  # find # steps for t
+  fwdStep <- floor(t_x/dt)
+  paths <- sPaths(s0, r, sigma, t_n, nSim, n)
+  put <- exp(-r*t_n)*mean(ifelse(paths[,fwdStep]>paths[,n], paths[,fwdStep]-paths[,n], 0))
+  return(put)
+}
+# function to price a forward-start American put option
+fwdPutAm <- function(s0, r, sigma, t_x, t_n, nSim, n, func, term){
+  dt <- t_n/n
+  fwdStep <- floor(t_x/dt)
+  paths <- sPaths(s0, r, sigma, t_n, nSim, n)
+  strike <- paths[,fwdStep]
+  # use LSMC to find put price at t_x using stock price from t_x to t_n
+  put_tx <- lsmc(paths[,fwdStep:n], strike, r, t_n-t_x, nSim, n-fwdStep+1, func, term)
+  put <- exp(-r*t_x)*put_tx
+  return(put)
+}
+```
+
+```{R, echo = FALSE}
+##### QUESTION 2 #####
+# function to price a forward-start European put option
+fwdPutEu <- function(s0, r, sigma, t_x, t_n, nSim, n){
+  dt <- t_n/n
+  # find # steps for t
+  fwdStep <- floor(t_x/dt)
+  paths <- sPaths(s0, r, sigma, t_n, nSim, n)
+  put <- exp(-r*t_n)*mean(ifelse(paths[,fwdStep]>paths[,n], paths[,fwdStep]-paths[,n], 0))
+  return(put)
+}
+# function to price a forward-start American put option
+# function to price a forward-start European put option
+fwdPutEu <- function(s0, r, sigma, t_x, t_n, nSim, n){
+  dt <- t_n/n
+  # find # steps for t
+  fwdStep <- floor(t_x/dt)
+  paths <- sPaths(s0, r, sigma, t_n, nSim, n)
+  put <- exp(-r*t_n)*mean(ifelse(paths[,fwdStep]>paths[,n], paths[,fwdStep]-paths[,n], 0))
+  return(put)
+}
+# function to price a forward-start American put option
+fwdPutAm <- function(s0, r, sigma, t_x, t_n, nSim, n, func, term){
+  dt <- t_n/n
+  fwdStep <- floor(t_x/dt)
+  paths1 <- sPaths(s0, r, sigma, t_x, nSim, n)
+  strike <- paths1[,n]
+  # use LSMC to find put price at t_x using stock price from t_x to t_n
+  paths2 <- sPaths(mean(strike), r, sigma, t_n-t_x, nSim, n)
+  put_tx <- lsmc(paths2, strike, r, t_n-t_x, nSim, n, func, term)
+  put <- exp(-r*t_x)*put_tx
+  return(put)
+}
+```
+
+## Question 1
+```{R, eval = FALSE}
+# set parameters
+s0 <- c(36, 40, 44)
+t <- c(0.5, 1, 2)
+term <- 2:4
+strike <- 40
+r <- .06
+sigma <- .2
+nSim <- 100000
+n <- 20
+# (a) Laguerre polynomials
+func <- "Laguerre"
+put_1a <- rep(list(diag(0,3,3)),3)
+for (i in 1:length(s0)){
+  for (j in 1:length(t)){
+    # simulate stock price paths
+    paths <- sPaths(s0[i], r, sigma, t[j], nSim, n)
+    for (k in 1:length(term)){
+      cat("Laguerre - i=",i, "j=",j, "k=",k, "\n")
+      put_1a[[i]][j,k] <- lsmc(paths, strike, r, t[j], nSim, n, func, term[k])
+    }
+  }
+}
+# (b) Hermite polynomials
+func <- "Hermite"
+put_1b <- rep(list(diag(0,3,3)),3)
+for (i in 1:length(s0)){
+  for (j in 1:length(t)){
+    # simulate stock price paths
+    paths <- sPaths(s0[i], r, sigma, t[j], nSim, n)
+    for (k in 1:length(term)){
+      cat("Hermite - i=",i, "j=",j, "k=",k, "\n")
+      put_1b[[i]][j,k] <- lsmc(paths, strike, r, t[j], nSim, n, func, term[k])
+    }
+  }
+}
+# (c) Simple Monomials
+func <- "Monomials"
+put_1c <- rep(list(diag(0,3,3)),3)
+for (i in 1:length(s0)){
+  for (j in 1:length(t)){
+    # simulate stock price paths
+    paths <- sPaths(s0[i], r, sigma, t[j], nSim, n)
+    for (k in 1:length(term)){
+      cat("Monomials - i=",i, "j=",j, "k=",k, "\n")
+      put_1c[[i]][j,k] <- lsmc(paths, strike, r, t[j], nSim, n, func, term[k])
+    }
+  }
+}
+```
+
+!["Laguerre Polynomials"](1a.png)
+
+!["Hermite Polynomials"](1b.png)
+   
+!["Simple Monomials"](1c.png)   
+   
+
+\newpage
+### Comments on the results:
+Comparing the option prices from the different polynomials, I found:   
+
+* The option prices from the Laguerre polynomial converge quickly, but with the lowest accuracy.
+* The option prices from the Hermite polynomial converge relatively slowly, and with better accuracy than the ones from Laguerre polynomial.
+* the option prices from the simple monomial are very similar to the ones from the Hermite polynomial. They have the similar order of convergency and the similar accuracy. 
+
+## Question 2
+```{R}
+# set parameters
+s0 <- 65
+r <- .06
+sigma <- .2
+t_x <- 0.2
+t_n <- 1
+nSim <- 10000
+n <- 200
+```
+
+### (a) forward-start European put
+```{R}
+fwdPutEu(s0, r, sigma, t_x, t_n, nSim, n)
+```
+### (b) forward-start American put
+```{R}
+# use Hermite polynomial for better accuracy
+func <- "Hermite"
+term <- 4
+fwdPutAm(s0, r, sigma, t_x, t_n, nSim, n, func, term)
+```
